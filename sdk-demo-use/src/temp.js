@@ -1,6 +1,5 @@
 import React, { useState, useCallback } from "react";
 import CryptoJS from "crypto-js";
-import SDK from "sdk-demo-1111";
 
 const SecureFileHandler = () => {
   const [file, setFile] = useState(null);
@@ -9,8 +8,6 @@ const SecureFileHandler = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [blobId, setBlobId] = useState(""); // Add this to store the blobId
-
-  const sdk = new SDK();
 
   // Constants for chunk sizes
   const UPLOAD_CHUNK_SIZE = 64 * 1024;
@@ -132,10 +129,47 @@ const SecureFileHandler = () => {
 
     try {
       // Generate encryption key
-      const result = await sdk.storeFileWithEncryption(file, 5, "MANI");
+      const key = CryptoJS.SHA256(password).toString(CryptoJS.enc.Hex);
 
-      console.log(result);
+      // Read file
+      updateStatus("info", "Reading file...");
+      const fileContent = await readFileAsArrayBuffer(file);
 
+      // Encrypt file
+      updateStatus("info", "Encrypting file...");
+      const wordArray = CryptoJS.lib.WordArray.create(
+        new Uint8Array(fileContent)
+      );
+      const encrypted = CryptoJS.AES.encrypt(wordArray, key).toString();
+
+      // Upload encrypted file
+      updateStatus("info", "Uploading encrypted file...");
+      const encryptedBytes = new Uint8Array(
+        atob(encrypted)
+          .split("")
+          .map((char) => char.charCodeAt(0))
+      );
+
+      const blob = new Blob([encryptedBytes], {
+        type: "application/octet-stream",
+      });
+
+      const response = await fetch(
+        "https://publisher.walrus-testnet.walrus.space/v1/store?epochs=5",
+        {
+          method: "PUT",
+          body: blob,
+          headers: {
+            "Content-Type": "application/octet-stream",
+          },
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Upload failed: ${response.status}`);
+      }
+
+      const result = await response.json();
       const uploadedBlobId = result.newlyCreated.blobObject.blobId;
       setBlobId(uploadedBlobId); // Store the blobId
 
@@ -165,7 +199,38 @@ const SecureFileHandler = () => {
     try {
       // Download encrypted file
       updateStatus("info", "Downloading encrypted file...");
-      const blob = await sdk.readFileWithDecryption(blobId, "MANI");
+      const response = await fetch(
+        `https://aggregator.walrus-testnet.walrus.space/v1/${blobId}`
+      );
+
+      if (!response.ok) {
+        throw new Error(`Download failed: ${response.status}`);
+      }
+
+      // Process downloaded file
+      const encryptedData = await response.arrayBuffer();
+      const encryptedBase64 = await arrayBufferToBase64(encryptedData);
+
+      // Decrypt file
+      updateStatus("info", "Decrypting file...");
+      const key = CryptoJS.SHA256("123456").toString(CryptoJS.enc.Hex); // Using fixed key for decryption
+      const decrypted = CryptoJS.AES.decrypt(encryptedBase64, key);
+
+      // Process decryption in chunks
+      const decryptedBytes = new Uint8Array(decrypted.sigBytes);
+      const words = decrypted.words;
+
+      for (let i = 0; i < decrypted.sigBytes; i += PROCESSING_CHUNK_SIZE) {
+        const end = Math.min(i + PROCESSING_CHUNK_SIZE, decrypted.sigBytes);
+        for (let j = i; j < end; j++) {
+          decryptedBytes[j] = (words[j >>> 2] >>> (24 - (j % 4) * 8)) & 0xff;
+        }
+        setProgress(Math.min(50 + (i / decrypted.sigBytes) * 50, 95));
+      }
+
+      // Download decrypted file
+      const mimeType = detectFileType(decryptedBytes);
+      const blob = new Blob([decryptedBytes], { type: mimeType });
       const url = URL.createObjectURL(blob);
 
       const a = document.createElement("a");

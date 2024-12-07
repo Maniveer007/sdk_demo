@@ -1,4 +1,5 @@
-// storage-sdk/index.ts
+import get from "./getFile/getFile";
+import upload from "./uploadFile/uploadFile";
 interface StorageConfig {
   publisherUrl?: string;
   aggregatorUrl?: string;
@@ -17,15 +18,7 @@ class StorageSDK {
 
   async storeFile(file: File, epochs: number = 5): Promise<any> {
     try {
-      const url = `${this.publisherUrl}/v1/store?epochs=${epochs}`;
-
-      const response = await fetch(url, {
-        method: "PUT",
-        body: file,
-        headers: {
-          "Content-Type": "application/octet-stream",
-        },
-      });
+      const response = await upload.uploadFile(this.publisherUrl, file, epochs);
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
@@ -37,17 +30,49 @@ class StorageSDK {
     }
   }
 
+  async storeFileWithEncryption(
+    file: File,
+    epochs: number = 5,
+    password: string
+  ): Promise<any> {
+    try {
+      const response = await upload.uploadWithEncryption(
+        this.publisherUrl,
+        file,
+        epochs,
+        password
+      );
+      return response;
+    } catch (error: any) {
+      throw new Error(`Upload error: ${error.message}`);
+    }
+  }
+
   async readFile(blobId: string): Promise<ReadableStream<Uint8Array>> {
     try {
-      const url = `${this.aggregatorUrl}/v1/${blobId}`;
-
-      const response = await fetch(url);
+      const response = await get.getFile(this.aggregatorUrl, blobId);
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
       return response.body!;
+    } catch (error: any) {
+      throw new Error(`Read error: ${error.message}`);
+    }
+  }
+
+  async readFileWithDecryption(
+    blobId: string,
+    password: string
+  ): Promise<Blob> {
+    try {
+      const blob = await get.getFileWithDecryption(
+        this.aggregatorUrl,
+        blobId,
+        password
+      );
+      return blob;
     } catch (error: any) {
       throw new Error(`Read error: ${error.message}`);
     }
